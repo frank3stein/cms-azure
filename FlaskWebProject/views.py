@@ -12,6 +12,13 @@ from flask_login import current_user, login_user, logout_user, login_required
 from FlaskWebProject.models import User, Post
 import msal
 import uuid
+import logging
+
+# from werkzeug.middleware.proxy_fix import ProxyFix
+
+# app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+# logging
+logging.basicConfig(level=logging.DEBUG)
 
 imageSourceUrl = (
     "https://"
@@ -29,7 +36,7 @@ def home():
     user = User.query.filter_by(username=current_user.username).first_or_404()
     posts = Post.query.all()
     return render_template(
-        "index.html", user=session["user"], title="Home Page", posts=posts
+        "index.html", user=session["state"], title="Home Page", posts=posts
     )
 
 
@@ -75,11 +82,14 @@ def login():
             next_page = url_for("home")
         return redirect(next_page)
     session["state"] = str(uuid.uuid4())
-    # auth_url = _build_auth_url(scopes=Config.SCOPE, state=session["state"])
+    # auth_url = _build_auth_url(
+    #     authority=Config.AUTHORITY, scopes=Config.SCOPE, state=session["state"]
+    # )
     auth_url = _build_msal_app().get_authorization_request_url(
-        scopes=Config.SCOPE,
+        Config.SCOPE,  # Technically we can use an empty list [] to just sign in
+        # Here we choose to also collect user consent up front
         state=session["state"],
-        redirect_uri=Config.REDIRECT_FULL_PATH,
+        redirect_uri=url_for("authorized", _external=True),
     )
     print("auth url ", auth_url, url_for("authorized", _external=True))
     return render_template("login.html", title="Sign In", form=form, auth_url=auth_url)
@@ -97,15 +107,15 @@ def authorized():
         cache = _load_cache()
         # TODO: Acquire a token from a built msal app, along with the appropriate redirect URI
         # result =
-        result = _build_msal_app().get_authorization_request_url(
+        result = _build_msal_app(cache=cache).get_authorization_request_url(
+            # request.args["code"],
             scopes=Config.SCOPE,
-            state=session["state"],
             redirect_uri=url_for("authorized", _external=True),
         )
-        print("result ", result)
+        print("result ", result, request.args["code"])
         if "error" in result:
             return render_template("auth_error.html", result=result)
-        session["user"] = result.get("id_token_claims")
+        session["state"] = result.get("id_token_claims")
         # Note: In a real app, we'd use the 'name' property from session["user"] below
         # Here, we'll use the admin username for anyone who is authenticated by MS
         user = User.query.filter_by(username="admin").first()
@@ -156,12 +166,32 @@ def _build_msal_app(cache=None, authority=None):
 
 
 def _build_auth_url(authority=None, scopes=None, state=None):
-    # TODO: Return the full Auth Request URL with appropriate Redirect URI
+    return _build_msal_app(authority=authority).get_authorization_request_url(
+        scopes or [],
+        state=state or str(uuid.uuid4()),
+        redirect_uri=url_for("authorized", _external=True),
+    )
 
-    cache = _load_cache()  # This web app maintains one cache per session
-    cca = _build_msal_app(cache)
-    accounts = cca.get_accounts()
-    if accounts:  # So all accounts belong to the current signed-in user
-        result = cca.acquire_token_silent(scopes, account=accounts[0])
-        _save_cache(cache)
-        return result
+
+# app.jinja_env.globals.update(_build_auth_url=_build_auth_url)
+
+# def _build_auth_url(authority=None, scopes=None, state=None):
+#     # TODO: Return the full Auth Request URL with appropriate Redirect URI
+
+#     cache = _load_cache()  # This web app maintains one cache per session
+#     cca = _build_msal_app(cache)
+#     accounts = cca.get_accounts()
+#     if accounts:  # So all accounts belong to the current signed-in user
+#         result = cca.acquire_token_silent(scopes, account=accounts[0])
+#         _save_cache(cache)
+#         return result
+
+
+# def _get_token_from_cache(scope=None):
+#     cache = _load_cache()  # This web app maintains one cache per session
+#     cca = _build_msal_app(cache)
+#     accounts = cca.get_accounts()
+#     if accounts:  # So all accounts belong to the current signed-in user
+#         result = cca.acquire_token_silent(scope, account=accounts[0])
+#         _save_cache(cache)
+#         return result
