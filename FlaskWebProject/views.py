@@ -77,11 +77,13 @@ def login():
             flash("Invalid username or password")
             return redirect(url_for("login"))
         login_user(user, remember=form.remember_me.data)
+        logging.info("User logged in: %s", user)
         next_page = request.args.get("next")
         if not next_page or url_parse(next_page).netloc != "":
             next_page = url_for("home")
         return redirect(next_page)
     session["state"] = str(uuid.uuid4())
+    logging.info(" %s session created", session["state"])
     # auth_url = _build_auth_url(
     #     authority=Config.AUTHORITY, scopes=Config.SCOPE, state=session["state"]
     # )
@@ -91,7 +93,7 @@ def login():
         state=session["state"],
         redirect_uri=url_for("authorized", _external=True),
     )
-    print("auth url ", auth_url, url_for("authorized", _external=True))
+    # print("auth url ", auth_url, url_for("authorized", _external=True))
     return render_template("login.html", title="Sign In", form=form, auth_url=auth_url)
 
 
@@ -105,20 +107,20 @@ def authorized():
         return render_template("auth_error.html", result=request.args)
     if request.args.get("code"):
         cache = _load_cache()
-        # TODO: Acquire a token from a built msal app, along with the appropriate redirect URI
-        # result =
+
         result = _build_msal_app(cache=cache).get_authorization_request_url(
             # request.args["code"],
             scopes=Config.SCOPE,
             redirect_uri=url_for("authorized", _external=True),
         )
-        print("result ", result, request.args["code"])
+        # print("result ", result, request.args["code"])
         if "error" in result:
             return render_template("auth_error.html", result=result)
         session["state"] = result.get("id_token_claims")
         # Note: In a real app, we'd use the 'name' property from session["user"] below
         # Here, we'll use the admin username for anyone who is authenticated by MS
         user = User.query.filter_by(username="admin").first()
+        logging.info("%s is authorized.", user)
         login_user(user)
         _save_cache(cache)
     return redirect(url_for("home"))
@@ -126,6 +128,7 @@ def authorized():
 
 @app.route("/logout")
 def logout():
+    logging.info("User logged out, session ended (%s)", session["state"])
     logout_user()
     if session.get("user"):  # Used MS Login
         # Wipe out user and its token cache from session
@@ -142,7 +145,6 @@ def logout():
 
 
 def _load_cache():
-    # TODO: Load the cache from `msal`, if it exists
     cache = msal.SerializableTokenCache()
     if session.get("token_cache"):
         cache.deserialize(session["token_cache"])
@@ -150,13 +152,11 @@ def _load_cache():
 
 
 def _save_cache(cache):
-    # TODO: Save the cache, if it has changed
     if cache.has_state_changed:
         session["token_cache"] = cache.serialize()
 
 
 def _build_msal_app(cache=None, authority=None):
-    # TODO: Return a ConfidentialClientApplication
     return msal.ConfidentialClientApplication(
         Config.CLIENT_ID,
         authority=Config.AUTHORITY,
@@ -171,27 +171,3 @@ def _build_auth_url(authority=None, scopes=None, state=None):
         state=state or str(uuid.uuid4()),
         redirect_uri=url_for("authorized", _external=True),
     )
-
-
-# app.jinja_env.globals.update(_build_auth_url=_build_auth_url)
-
-# def _build_auth_url(authority=None, scopes=None, state=None):
-#     # TODO: Return the full Auth Request URL with appropriate Redirect URI
-
-#     cache = _load_cache()  # This web app maintains one cache per session
-#     cca = _build_msal_app(cache)
-#     accounts = cca.get_accounts()
-#     if accounts:  # So all accounts belong to the current signed-in user
-#         result = cca.acquire_token_silent(scopes, account=accounts[0])
-#         _save_cache(cache)
-#         return result
-
-
-# def _get_token_from_cache(scope=None):
-#     cache = _load_cache()  # This web app maintains one cache per session
-#     cca = _build_msal_app(cache)
-#     accounts = cca.get_accounts()
-#     if accounts:  # So all accounts belong to the current signed-in user
-#         result = cca.acquire_token_silent(scope, account=accounts[0])
-#         _save_cache(cache)
-#         return result
